@@ -201,7 +201,7 @@ def get_tags(
 
 @dataclass
 class ScriptOptions:
-    image_file: Path = field(positional=True)
+    image_files: list[Path] = field(positional=True)
     model: str = field(default="vit")
     gen_threshold: float = field(default=0.35)
     char_threshold: float = field(default=0.75)
@@ -209,9 +209,6 @@ class ScriptOptions:
 
 def main(opts: ScriptOptions):
     repo_id = MODEL_REPO_MAP.get(opts.model)
-    image_path = Path(opts.image_file).resolve()
-    if not image_path.is_file():
-        raise FileNotFoundError(f"Image file not found: {image_path}")
 
     print(f"Loading model '{opts.model}' from '{repo_id}'...")
     model, target_size = load_model_hf(repo_id=repo_id)
@@ -219,50 +216,60 @@ def main(opts: ScriptOptions):
     print("Loading tag list...")
     labels: LabelData = load_labels_hf(repo_id=repo_id)
 
-    print("Loading image and preprocessing...")
-    # get image
-    img_input: Image.Image = Image.open(image_path)
-    # ensure image is RGB
-    img_input = pil_ensure_rgb(img_input)
-    # pad to square with white background
-    img_input = pil_pad_square(img_input)
-    img_input = pil_resize(img_input, target_size)
-    # convert to numpy array and add batch dimension
-    inputs = np.array(img_input)
-    inputs = np.expand_dims(inputs, axis=0)
-    # NHWC image RGB to BGR
-    inputs = inputs[..., ::-1]
+    for image_path in opts.image_files:
+        image_path = Path(image_path).resolve()
+        if not image_path.is_file():
+            print(f"Image file not found: {image_path}")
+            continue
 
-    print("Running inference...")
-    outputs = model.predict(inputs)
+        print(f"Processing image: {image_path}")
 
-    print("Processing results...")
-    caption, taglist, ratings, character, general = get_tags(
-        probs=outputs,
-        labels=labels,
-        gen_threshold=opts.gen_threshold,
-        char_threshold=opts.char_threshold,
-    )
+        print("Loading image and preprocessing...")
+        # get image
+        img_input: Image.Image = Image.open(image_path)
+        # ensure image is RGB
+        img_input = pil_ensure_rgb(img_input)
+        # pad to square with white background
+        img_input = pil_pad_square(img_input)
+        img_input = pil_resize(img_input, target_size)
+        # convert to numpy array and add batch dimension
+        inputs = np.array(img_input)
+        inputs = np.expand_dims(inputs, axis=0)
+        # NHWC image RGB to BGR
+        inputs = inputs[..., ::-1]
 
-    print("--------")
-    print(f"Caption: {caption}")
-    print("--------")
-    print(f"Tags: {taglist}")
+        print("Running inference...")
+        outputs = model.predict(inputs)
 
-    print("--------")
-    print("Ratings:")
-    for k, v in ratings.items():
-        print(f"  {k}: {v:.3f}")
+        print("Processing results...")
+        caption, taglist, ratings, character, general = get_tags(
+            probs=outputs,
+            labels=labels,
+            gen_threshold=opts.gen_threshold,
+            char_threshold=opts.char_threshold,
+        )
 
-    print("--------")
-    print(f"Character tags (threshold={opts.char_threshold}):")
-    for k, v in character.items():
-        print(f"  {k}: {v:.3f}")
+      #  print("--------")
+     #   print(f"Caption: {caption}")
+    #    print("--------")
+        print(f"Tags: {taglist}")
 
-    print("--------")
-    print(f"General tags (threshold={opts.gen_threshold}):")
-    for k, v in general.items():
-        print(f"  {k}: {v:.3f}")
+   #     print("--------")
+  #      print("Ratings:")
+ #       for k, v in ratings.items():
+#            print(f"  {k}: {v:.3f}")
+
+        #print("--------")
+       # print(f"Character tags (threshold={opts.char_threshold}):")
+       # for k, v in character.items():
+         #   print(f"  {k}: {v:.3f}")
+
+        #print("--------")
+       # print(f"General tags (threshold={opts.gen_threshold}):")
+       # for k, v in general.items():
+      #      print(f"  {k}: {v:.3f}")
+
+     #   print()
 
     print("Done!")
 
