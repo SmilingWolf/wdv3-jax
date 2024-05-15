@@ -16,7 +16,8 @@ import Models
 
 MODEL_REPO_MAP = {
     "vit": "SmilingWolf/wd-vit-tagger-v3",
-    "swinv2": "SmilingWolf/wd-swinv2-tagger-v3",
+    "swinv2_v2": "SmilingWolf/wd-v1-4-swinv2-tagger-v2",
+    "swinv2_v3": "SmilingWolf/wd-swinv2-tagger-v3",
     "convnext": "SmilingWolf/wd-convnext-tagger-v3",
 }
 
