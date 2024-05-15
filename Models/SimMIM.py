@@ -1,18 +1,19 @@
 import dataclasses
-from typing import Any, Tuple
+from typing import Any
 
 import einops
 import jax.numpy as jnp
 from flax import linen
 
 from .ConvNext import ConvNext
+from .EVA02 import EVA02Transformer
 from .HiViT import HierarchicalViT
 from .SwinV2 import SwinTransformerV2
 from .ViT import VisionTransformer
 
 
 class WindowedNorm(linen.Module):
-    target_size: Tuple[int]
+    target_size: tuple[int, int]
     window_size: int = 47
 
     def get_targets_count(self):
@@ -90,7 +91,7 @@ class SwinTransformerV2ForSimMIM(SwinTransformerV2):
         x = self.patch_embed(x)
 
         B, L, _ = x.shape
-        mask_token = linen.dtypes.promote_dtype(self.mask_token, dtype=self.dtype)[0]
+        mask_token = self.mask_token.astype(self.dtype)
         mask_tokens = jnp.broadcast_to(mask_token, (B, L, self.embed_dim))
         mask = jnp.reshape(mask, (B, L, 1)).astype(mask_tokens.dtype)
         x = x * (1.0 - mask) + mask_tokens * mask
@@ -154,13 +155,13 @@ class HierarchicalViTForSimMIM(HierarchicalViT):
 
         B, L, _ = x.shape
         H = W = int(L**0.5)
-        mask_token = linen.dtypes.promote_dtype(self.mask_token, dtype=self.dtype)[0]
+        mask_token = self.mask_token.astype(self.dtype)
         mask_tokens = jnp.broadcast_to(mask_token, (B, L, self.embed_dim))
         mask = jnp.reshape(mask, (B, H, W, 1)).astype(mask_tokens.dtype)
         mask = self.patch_embed.patches_reshape(mask)
         x = x * (1.0 - mask) + mask_tokens * mask
 
-        for layer in self.vit_body:
+        for layer in self.hivit_body:
             x = layer(x, train=train)
 
         x = self.norm(x)
@@ -197,6 +198,42 @@ class ConvNextForSimMIM(ConvNext):
 
     def get_stride(self):
         return 32
+
+
+class EVA02ForSimMIM(EVA02Transformer):
+    def setup(self):
+        super().setup()
+
+        token_init = linen.initializers.normal(0.02)
+        self.mask_token = self.param("mask_token", token_init, (1, 1, self.embed_dim))
+
+    def __call__(self, x, mask, train: bool = False):
+        x = self.patch_embed(x)
+
+        B, L, _ = x.shape
+        mask_tokens = jnp.broadcast_to(self.mask_token, (B, L, self.embed_dim))
+        mask = jnp.reshape(mask, (B, L, 1)).astype(mask_tokens.dtype)
+        x = x * (1.0 - mask) + mask_tokens * mask
+
+        B, L, C = x.shape
+        b_cls = jnp.broadcast_to(self.cls_token, (B, 1, C))
+        x = jnp.concatenate([b_cls, x], axis=1)
+
+        x = self.pos_emb(x)
+
+        for layer in self.eva02_body:
+            x = layer(x, train=train)
+
+        x = self.norm(x)
+        x = x[:, 1:]
+
+        B, L, C = x.shape
+        H = W = int(L**0.5)
+        x = jnp.reshape(x, (B, H, W, C))
+        return x
+
+    def get_stride(self):
+        return self.patch_size
 
 
 class SimMIM(linen.Module):
@@ -238,7 +275,7 @@ class SimMIM(linen.Module):
         if self.enable_windowed_norm:
             x = WindowedNorm(target_size=(H, W), window_size=self.norm_patch_size)(x)
 
-        x_rec = linen.dtypes.promote_dtype(x_rec, dtype=x.dtype)[0]
+        x_rec = x_rec.astype(x.dtype)
         loss_recon = jnp.abs(x - x_rec)
         loss = jnp.sum(loss_recon * mask) / (jnp.sum(mask) + 1e-5) / C
 
@@ -388,7 +425,7 @@ def simmim_hivit_tiny():
     return SimMIM(**config)
 
 
-def simmim_hivit_small(**kwargs):
+def simmim_hivit_small():
     config = {
         "depths": (2, 2, 20),
         "embed_dim": 96,
@@ -405,7 +442,7 @@ def simmim_hivit_small(**kwargs):
     return SimMIM(**config)
 
 
-def simmim_convnext_tiny(**kwargs):
+def simmim_convnext_tiny():
     config = {
         "embed_dims": (96, 192, 384, 768),
         "depths": (3, 3, 9, 3),
@@ -420,7 +457,7 @@ def simmim_convnext_tiny(**kwargs):
     return SimMIM(**config)
 
 
-def simmim_convnext_small(**kwargs):
+def simmim_convnext_small():
     config = {
         "embed_dims": (96, 192, 384, 768),
         "depths": (3, 3, 27, 3),
@@ -435,7 +472,7 @@ def simmim_convnext_small(**kwargs):
     return SimMIM(**config)
 
 
-def simmim_convnext_base(**kwargs):
+def simmim_convnext_base():
     config = {
         "embed_dims": (128, 256, 512, 1024),
         "depths": (3, 3, 27, 3),
@@ -445,6 +482,60 @@ def simmim_convnext_base(**kwargs):
     config = {
         "encoder": encoder,
         "encoder_stride": encoder.get_stride(),
+        "patch_size": encoder.patch_size,
+    }
+    return SimMIM(**config)
+
+
+def simmim_eva02_small():
+    config = {
+        "num_layers": 12,
+        "embed_dim": 384,
+        "mlp_dim": (384 * 4 * 2) // 3,
+        "num_heads": 6,
+        "scale_mlp": False,
+    }
+    encoder = EVA02ForSimMIM(**config)
+
+    config = {
+        "encoder": encoder,
+        "encoder_stride": encoder.get_stride(),
+        "patch_size": encoder.patch_size,
+    }
+    return SimMIM(**config)
+
+
+def simmim_eva02_base():
+    config = {
+        "num_layers": 12,
+        "embed_dim": 768,
+        "mlp_dim": (768 * 4 * 2) // 3,
+        "num_heads": 12,
+        "scale_mlp": True,
+    }
+    encoder = EVA02ForSimMIM(**config)
+
+    config = {
+        "encoder": encoder,
+        "encoder_stride": encoder.patch_size,
+        "patch_size": encoder.patch_size,
+    }
+    return SimMIM(**config)
+
+
+def simmim_eva02_large():
+    config = {
+        "num_layers": 24,
+        "embed_dim": 1024,
+        "mlp_dim": (1024 * 4 * 2) // 3,
+        "num_heads": 16,
+        "scale_mlp": True,
+    }
+    encoder = EVA02ForSimMIM(**config)
+
+    config = {
+        "encoder": encoder,
+        "encoder_stride": encoder.patch_size,
         "patch_size": encoder.patch_size,
     }
     return SimMIM(**config)
