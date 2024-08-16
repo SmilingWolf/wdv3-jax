@@ -12,7 +12,7 @@ One day I might actually package my code like a normal person, but until then...
 1. clone the repository and enter the directory:
 ```sh
 git clone https://github.com/SmilingWolf/wdv3-jax.git
-cd wd3-jax
+cd wdv3-jax
 ```
 
 2. Create a virtual environment and install the Python requirements.
@@ -40,7 +40,7 @@ Consult https://github.com/google/jax?tab=readme-ov-file#installation for more i
 
 3. Run the example script, picking one of the 3 models to use:
 ```sh
-python wdv3_jax.py <swinv2|convnext|vit> path/to/image.png
+python wdv3_jax.py --model <swinv2|convnext|vit> path/to/image.png
 ```
 
 Example output from `python wdv3_jax.py --model swinv2 test.png`:
